@@ -2,6 +2,8 @@
 
 A standalone web-research chat extracted from Tender Designer. It plans targeted searches with a local Ollama model, reads public web pages, synthesises a cited Markdown answer, keeps conversations in browser storage, and exports results as Markdown.
 
+> **Maintenance note:** General Search and Tender Designer share this research engine. Whenever the engine is updated in either application, review and apply the equivalent upgrade to both applications so their search behaviour remains aligned.
+
 ## Run
 
 ```bash
