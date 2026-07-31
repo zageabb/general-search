@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>General Search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+<div class="site-shell">
+  <nav class="app-nav">
+    <a class="brand-lockup" href="/"><span class="brand-mark">GS</span><span>General Search</span></a>
+    <div class="nav-links"><a class="active" href="#workspace">Search</a><a href="#settings">Settings</a></div>
+  </nav>
+  <main>
+    <section class="research-shell" id="workspace" data-default-model="{{ settings.model }}">
+      <aside class="history-sidebar">
+        <div class="sidebar-header"><div><span class="eyebrow">Web research</span><h1>General Search</h1></div><button class="btn primary small" id="new-chat">New chat</button></div>
+        <div id="history-list" class="history-list"></div>
+      </aside>
+      <div class="chat-main">
+        <header class="chat-header"><div class="min"><span class="label">Active conversation</span><h2 id="active-title">New research</h2></div><div class="controls"><label>Model<select id="model"><option>{{ settings.model }}</option></select></label><label class="switch"><input type="checkbox" id="allowed-only"> Allowed sites only</label></div></header>
+        <div id="conversation" class="conversation" aria-live="polite"></div>
+        <form id="search-form" class="composer"><textarea id="query" rows="3" placeholder="Ask anything that benefits from current web research…"></textarea><div class="composer-footer"><span id="context-summary">0 messages in context</span><button class="btn primary" id="submit">Search</button></div></form>
+      </div>
+      <aside class="runtime"><div class="runtime-header"><div><span class="label">Live research activity</span><strong id="phase">Ready</strong></div><span id="elapsed">0:00</span></div><div class="counts"><div><strong id="initiated">0</strong><span>Initiated</span></div><div><strong id="returned">0</strong><span>Returned</span></div><div><strong id="failed">0</strong><span>Failed</span></div></div><div id="events" class="events"><p>Research activity will appear here after you send a question.</p></div></aside>
+    </section>
+    <section id="save-actions" class="panel hidden"><div><h3>Latest research result</h3><p>Save a portable Markdown copy with its source list.</p></div><button class="btn outline" id="download">Download .md</button></section>
+    <details id="settings" class="panel settings-panel">
+      <summary>Search settings and instructions</summary>
+      <form id="settings-form">
+        <div class="grid">
+          <label>Ollama URL<input name="ollama_url" value="{{ settings.ollama_url }}"></label><label>Default model<input name="model" value="{{ settings.model }}"></label>
+          <label>Search backend<input name="search_backend" value="{{ settings.search_backend }}"></label><label>Research rounds<input type="number" min="1" max="5" name="max_search_rounds" value="{{ settings.max_search_rounds }}"></label>
+          <label>Results per query<input type="number" min="2" max="10" name="results_per_query" value="{{ settings.results_per_query }}"></label><label>Pages to read<input type="number" min="1" max="30" name="max_pages_to_read" value="{{ settings.max_pages_to_read }}"></label>
+          <label>Country<input name="market_country" value="{{ settings.market_country }}"></label><label>Region<input name="market_region" value="{{ settings.market_region }}"></label><label>City<input name="market_city" value="{{ settings.market_city }}"></label>
+          <label class="wide">Allowed websites<textarea name="allowed_domains" rows="5">{{ settings.allowed_domains }}</textarea></label><label class="wide">Blocked websites<textarea name="blocked_domains" rows="5">{{ settings.blocked_domains }}</textarea></label>
+          <label class="full">Persistent instructions<textarea name="general_search_instructions" rows="5">{{ settings.general_search_instructions }}</textarea></label>
+        </div><button class="btn outline">Save search settings</button><span class="status" id="settings-status"></span>
+      </form>
+      <hr>
+      <form id="prompts-form"><label>Query planning prompt<textarea name="planning" rows="10">{{ prompts.planning }}</textarea></label><label>Answer synthesis prompt<textarea name="answer" rows="12">{{ prompts.answer }}</textarea></label><button class="btn outline">Save search instructions</button><span class="status" id="prompts-status"></span></form>
+    </details>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body></html>

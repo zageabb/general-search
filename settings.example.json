@@ -1,0 +1,14 @@
+{
+  "ollama_url": "http://127.0.0.1:11434",
+  "model": "llama3.2",
+  "search_backend": "auto",
+  "max_search_rounds": 2,
+  "results_per_query": 5,
+  "max_pages_to_read": 10,
+  "allowed_domains": "",
+  "blocked_domains": "reddit.com\nquora.com",
+  "market_country": "GB",
+  "market_region": "",
+  "market_city": "",
+  "general_search_instructions": "You are a careful, neutral research assistant. Prefer primary and authoritative sources, explain uncertainty, and use concise Markdown unless the user asks for another style."
+}
