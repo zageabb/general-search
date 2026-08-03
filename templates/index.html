@@ -6,6 +6,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <style>
+    .chat-header { align-items: flex-start; }
+    .chat-header .controls { align-items: stretch; flex-direction: column; min-width: 180px; }
+    .chat-header .switch { display: flex; align-items: center; gap: 7px; padding: 0; white-space: normal; }
+    .chat-header .switch input { flex: 0 0 auto; width: auto; }
+    @media (max-width: 720px) { .chat-header .controls { display: none; } }
+  </style>
 </head>
 <body>
 <div class="site-shell">
@@ -40,7 +47,7 @@
         </div><button class="btn outline">Save search settings</button><span class="status" id="settings-status"></span>
       </form>
       <hr>
-      <form id="prompts-form"><label>Request routing and planning prompt<textarea name="planning" rows="16">{{ prompts.planning }}</textarea></label><label>Web answer synthesis prompt<textarea name="answer" rows="12">{{ prompts.answer }}</textarea></label><label>Knowledge answer prompt<textarea name="direct_answer" rows="14">{{ prompts.direct_answer }}</textarea></label><button class="btn outline">Save assistant instructions</button><span class="status" id="prompts-status"></span></form>
+      <form id="prompts-form"><label>Request routing and planning prompt<textarea name="planning" rows="16">{{ prompts.planning }}</textarea></label><label>Web answer synthesis prompt<textarea name="answer" rows="12">{{ prompts.answer }}</textarea></label><label>Knowledge answer prompt<textarea name="direct_answer" rows="14">{{ prompts.direct_answer }}</textarea></label><label>Final answer review prompt<textarea name="review" rows="16">{{ prompts.review }}</textarea></label><button class="btn outline">Save assistant instructions</button><span class="status" id="prompts-status"></span></form>
     </details>
   </main>
 </div>

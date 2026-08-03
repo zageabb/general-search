@@ -58,10 +58,25 @@ Clarified request: {{rewritten_question}}
 Answer requirements: {{requirements}}
 Useful subquestions: {{subquestions}}
 Web status: {{web_status}}"""
+REVIEW = """Perform the final quality-control pass on the proposed answer. Check whether it actually answers the user's clarified request and every listed requirement and useful subquestion. Correct omissions, contradictions, unsupported certainty, broken code, and unhelpful structure. Preserve accurate useful content and the user's requested format. When evidence is supplied, use only that evidence for externally verifiable claims and preserve valid [source_id] citations; never invent citations. When no evidence is supplied, do not claim web verification.
+
+Return JSON only with:
+- `answered`: true if the returned answer now fulfils the request as far as the available information allows
+- `issues`: a short list of issues found in the proposed answer
+- `final_answer`: the complete corrected answer in Markdown, even when no changes were needed
+
+Original request and conversation: {{query}}
+Clarified request: {{rewritten_question}}
+Answer requirements: {{requirements}}
+Useful subquestions: {{subquestions}}
+Evidence available to the answer: {{evidence}}
+
+Proposed answer:
+{{answer}}"""
 
 
 class PromptStore:
-    defaults = {"planning": PLANNING, "answer": ANSWER, "direct_answer": DIRECT_ANSWER}
+    defaults = {"planning": PLANNING, "answer": ANSWER, "direct_answer": DIRECT_ANSWER, "review": REVIEW}
 
     def load(self):
         PROMPTS_DIR.mkdir(exist_ok=True)

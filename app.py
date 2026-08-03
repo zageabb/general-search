@@ -71,16 +71,18 @@ def export():
     payload = request.get_json(silent=True) or {}
     query = str(payload.get("query") or "").strip()
     answer = str(payload.get("answer") or "").strip()
+    title = str(payload.get("title") or "General Search Result").strip()[:120]
     if not query or not answer:
         return jsonify(ok=False, message="Run a search before exporting."), 400
-    lines = ["# General Search Result", "", f"Generated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}", "", "## Research request", "", query, "", "## Answer", "", answer]
+    lines = [f"# {title}", "", f"Generated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}", "", "## Research request", "", query, "", "## Answer", "", answer]
     sources = payload.get("sources") or []
     if sources:
         lines += ["", "## Sources", ""]
         for index, source in enumerate(sources[:50], 1):
             lines.append(f"{index}. [{source.get('title') or source.get('url')}]({source.get('url')})")
     content = ("\n".join(lines).strip() + "\n").encode()
-    return send_file(BytesIO(content), mimetype="text/markdown", as_attachment=True, download_name="general_search_result.md")
+    filename = "".join(character if character.isalnum() or character in " .-_" else "-" for character in title).strip(" .-")
+    return send_file(BytesIO(content), mimetype="text/markdown", as_attachment=True, download_name=(filename or "general_search_result") + ".md")
 
 
 if __name__ == "__main__":

@@ -95,8 +95,10 @@ def _run(app, job_id, query, history, model, allowed_only):
                                                  requirements, subquestions, "Not needed for this request")
             event(job_id, "phase", "running", "Answering from model knowledge", phase="Producing answer")
             answer = ollama_text(settings["ollama_url"], model, direct_prompt)
+            answer = review_answer(job_id, prompts, settings, model, effective_query, rewritten_question,
+                                   requirements, subquestions, answer, "No web evidence (model knowledge answer)")
             update(job_id, status="completed", phase="Complete", message=answer, sources=[],
-                   steps=[f"Ollama model: {model}", "Route: model knowledge", f"Clarified request: {rewritten_question}"], completed_at=now())
+                   steps=[f"Ollama model: {model}", "Route: model knowledge", f"Clarified request: {rewritten_question}", "Final answer reviewed"], completed_at=now())
             event(job_id, "phase", "returned", "Answer completed", phase="Complete")
             return
 
@@ -149,8 +151,10 @@ def _run(app, job_id, query, history, model, allowed_only):
                                                  "Web research returned no readable evidence; answer cautiously from model knowledge")
             event(job_id, "phase", "running", "Web unavailable; using model knowledge", phase="Producing answer")
             answer = ollama_text(settings["ollama_url"], model, direct_prompt)
+            answer = review_answer(job_id, prompts, settings, model, effective_query, rewritten_question,
+                                   requirements, subquestions, answer, "No readable web evidence (knowledge fallback)")
             update(job_id, status="completed", phase="Complete", message=answer, sources=[],
-                   steps=[f"Ollama model: {model}", "Route: knowledge fallback after web failure", f"Clarified request: {rewritten_question}"], completed_at=now())
+                   steps=[f"Ollama model: {model}", "Route: knowledge fallback after web failure", f"Clarified request: {rewritten_question}", "Final answer reviewed"], completed_at=now())
             event(job_id, "phase", "returned", "Fallback answer completed", phase="Complete")
             return
         evidence_text = "\n\n---\n\n".join(f"[{x['source_id']}] {x['title']}\nURL: {x['url']}\nFound via: {x['query']}\nContent: {x['text']}" for x in evidence)
@@ -162,8 +166,10 @@ def _run(app, job_id, query, history, model, allowed_only):
             answer_prompt = f"Persistent user instructions:\n{instructions}\n\n{answer_prompt}"
         event(job_id, "phase", "running", f"Synthesising from {len(evidence)} sources", phase="Producing answer")
         answer = ollama_text(settings["ollama_url"], model, answer_prompt)
+        answer = review_answer(job_id, prompts, settings, model, effective_query, rewritten_question,
+                               requirements, subquestions, answer, evidence_text)
         sources = [{"source_id": x["source_id"], "title": x["title"], "url": x["url"]} for x in evidence]
-        update(job_id, status="completed", phase="Complete", message=answer, sources=sources, steps=[f"Ollama model: {model}", f"Planned {len(queries)} searches", f"Retained {len(evidence)} readable sources"], completed_at=now())
+        update(job_id, status="completed", phase="Complete", message=answer, sources=sources, steps=[f"Ollama model: {model}", f"Planned {len(queries)} searches", f"Retained {len(evidence)} readable sources", "Final answer reviewed"], completed_at=now())
         event(job_id, "phase", "returned", "Research answer completed", phase="Complete")
     except Exception as exc:
         update(job_id, status="failed", phase="Failed", error=str(exc), completed_at=now())
@@ -254,3 +260,24 @@ def direct_answer_prompt(prompts, settings, market, query, rewritten_question, r
                     subquestions="; ".join(subquestions) or "None", web_status=web_status)
     instructions = settings["general_search_instructions"].strip()
     return f"Persistent user instructions:\n{instructions}\n\n{prompt}" if instructions else prompt
+
+
+def review_answer(job_id, prompts, settings, model, query, rewritten_question, requirements, subquestions, answer, evidence):
+    event(job_id, "phase", "running", "Checking the answer against the request", phase="Reviewing answer")
+    prompt = render(prompts["review"], query=query, rewritten_question=rewritten_question,
+                    requirements="; ".join(requirements) or "None specified",
+                    subquestions="; ".join(subquestions) or "None", evidence=str(evidence)[:40_000], answer=answer[:30_000])
+    try:
+        reviewed = ollama_json(settings["ollama_url"], model, prompt)
+        final_answer = str(reviewed.get("final_answer") or "").strip()
+        issues = clean_items(reviewed.get("issues", []), 8)
+        detail = "; ".join(issues) if issues else "No material omissions found"
+        if not final_answer:
+            event(job_id, "reasoning", "failed", "Final review returned no answer", "Using the original draft")
+            return answer
+        status = "passed" if reviewed.get("answered") is True else "revised"
+        event(job_id, "reasoning", "returned", f"Final answer review {status}", detail)
+        return final_answer
+    except Exception as exc:
+        event(job_id, "reasoning", "failed", "Final answer review unavailable", str(exc))
+        return answer
