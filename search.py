@@ -33,7 +33,7 @@ def list_models():
     return [row.get("name") for row in response.json().get("models", []) if row.get("name")]
 
 
-def start_job(app, query, history, model, allowed_only):
+def start_job(app, query, history, model, allowed_only, uploaded_context=""):
     job_id = uuid.uuid4().hex
     job = {"id": job_id, "status": "queued", "phase": "Queued", "events": [], "sources": [], "steps": [], "message": None, "error": None, "created_at": now(), "started_at": None, "completed_at": None}
     with LOCK:
@@ -41,7 +41,7 @@ def start_job(app, query, history, model, allowed_only):
         finished = [key for key, value in JOBS.items() if value["status"] in {"completed", "failed"}]
         for key in finished[:-50]:
             JOBS.pop(key, None)
-    threading.Thread(target=_run, args=(app, job_id, query, history, model, allowed_only), daemon=True).start()
+    threading.Thread(target=_run, args=(app, job_id, query, history, model, allowed_only, uploaded_context), daemon=True).start()
     return deepcopy(job)
 
 
@@ -62,7 +62,7 @@ def update(job_id, **values):
             JOBS[job_id].update(values)
 
 
-def _run(app, job_id, query, history, model, allowed_only):
+def _run(app, job_id, query, history, model, allowed_only, uploaded_context=""):
     update(job_id, status="running", phase="Planning research", started_at=now())
     try:
         settings = get_settings()
@@ -74,6 +74,9 @@ def _run(app, job_id, query, history, model, allowed_only):
         prompts = PROMPTS.load()
         context = "\n\n".join(f"{x['role'].title()}: {x['content']}" for x in history[-12:])
         effective_query = query if not context else f"Conversation context:\n{context}\n\nCurrent request:\n{query}"
+        if uploaded_context:
+            effective_query = f"{effective_query}\n\n{uploaded_context}"
+            event(job_id, "document", "returned", "Included uploaded document context", f"{len(uploaded_context):,} characters available")
         planning = render(prompts["planning"], market=market, scope=scope, query=effective_query)
         event(job_id, "phase", "running", "Understanding and improving the request", phase="Planning response")
         parsed = ollama_json(settings["ollama_url"], model, planning)

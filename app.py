@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import os
+import json
 from datetime import datetime, timezone
 from io import BytesIO
 
 from flask import Flask, jsonify, render_template, request, send_file
 
+from document_extraction import clean_documents, document_context, extract_upload
 from search import JOBS, list_models, start_job
 from settings_store import PROMPTS, get_settings, save_prompts, save_settings
 
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 1_000_000
+app.config["MAX_CONTENT_LENGTH"] = 30_000_000
 
 
 @app.get("/")
@@ -21,7 +23,15 @@ def index():
 
 @app.post("/api/search")
 def search():
-    payload = request.get_json(silent=True) or {}
+    if request.files:
+        payload = request.form.to_dict()
+        try:
+            payload["history"] = json.loads(payload.get("history") or "[]")
+            payload["documents"] = json.loads(payload.get("documents") or "[]")
+        except json.JSONDecodeError:
+            return jsonify(ok=False, message="The conversation document context was invalid."), 400
+    else:
+        payload = request.get_json(silent=True) or {}
     query = str(payload.get("query") or "").strip()[:20_000]
     if not query:
         return jsonify(ok=False, message="Enter a research question before searching."), 400
@@ -29,8 +39,20 @@ def search():
     for item in (payload.get("history") or [])[-30:]:
         if isinstance(item, dict) and item.get("role") in {"user", "assistant"}:
             history.append({"role": item["role"], "content": str(item.get("content") or "")[:12_000]})
-    job = start_job(app, query, history, str(payload.get("model") or "")[:200], bool(payload.get("allowed_only")))
-    return jsonify(ok=True, job=job), 202
+    documents = clean_documents(payload.get("documents") or [])
+    for upload in request.files.getlist("documents"):
+        if not upload.filename:
+            continue
+        try:
+            documents.append(extract_upload(upload))
+            documents = clean_documents(documents)
+        except (ValueError, ImportError) as exc:
+            return jsonify(ok=False, message=f"Could not process {upload.filename}: {exc}"), 400
+        except Exception as exc:
+            return jsonify(ok=False, message=f"Could not read {upload.filename}: {exc}"), 400
+    allowed_only = str(payload.get("allowed_only") or "").lower() in {"1", "true", "yes", "on"}
+    job = start_job(app, query, history, str(payload.get("model") or "")[:200], allowed_only, document_context(documents))
+    return jsonify(ok=True, job=job, documents=documents, document_names=[item["name"] for item in documents]), 202
 
 
 @app.get("/api/search/<job_id>")
