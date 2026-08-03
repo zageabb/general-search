@@ -16,13 +16,13 @@
   <main>
     <section class="research-shell" id="workspace" data-default-model="{{ settings.model }}">
       <aside class="history-sidebar">
-        <div class="sidebar-header"><div><span class="eyebrow">Web research</span><h1>General Search</h1></div><button class="btn primary small" id="new-chat">New chat</button></div>
+        <div class="sidebar-header"><div><span class="eyebrow">Knowledge + web</span><h1>General Search</h1></div><button class="btn primary small" id="new-chat">New chat</button></div>
         <div id="history-list" class="history-list"></div>
       </aside>
       <div class="chat-main">
         <header class="chat-header"><div class="min"><span class="label">Active conversation</span><h2 id="active-title">New research</h2></div><div class="controls"><label>Model<select id="model"><option>{{ settings.model }}</option></select></label><label class="switch"><input type="checkbox" id="allowed-only"> Allowed sites only</label></div></header>
         <div id="conversation" class="conversation" aria-live="polite"></div>
-        <form id="search-form" class="composer"><textarea id="query" rows="3" placeholder="Ask anything that benefits from current web research…"></textarea><div class="composer-footer"><span id="context-summary">0 messages in context</span><button class="btn primary" id="submit">Search</button></div></form>
+        <form id="search-form" class="composer"><textarea id="query" rows="3" placeholder="Ask a question, explore a subject, draft content, or request code…"></textarea><div class="composer-footer"><span id="context-summary">0 messages in context</span><button class="btn primary" id="submit">Ask</button></div></form>
       </div>
       <aside class="runtime"><div class="runtime-header"><div><span class="label">Live research activity</span><strong id="phase">Ready</strong></div><span id="elapsed">0:00</span></div><div class="counts"><div><strong id="initiated">0</strong><span>Initiated</span></div><div><strong id="returned">0</strong><span>Returned</span></div><div><strong id="failed">0</strong><span>Failed</span></div></div><div id="events" class="events"><p>Research activity will appear here after you send a question.</p></div></aside>
     </section>
@@ -40,7 +40,7 @@
         </div><button class="btn outline">Save search settings</button><span class="status" id="settings-status"></span>
       </form>
       <hr>
-      <form id="prompts-form"><label>Query planning prompt<textarea name="planning" rows="10">{{ prompts.planning }}</textarea></label><label>Answer synthesis prompt<textarea name="answer" rows="12">{{ prompts.answer }}</textarea></label><button class="btn outline">Save search instructions</button><span class="status" id="prompts-status"></span></form>
+      <form id="prompts-form"><label>Request routing and planning prompt<textarea name="planning" rows="16">{{ prompts.planning }}</textarea></label><label>Web answer synthesis prompt<textarea name="answer" rows="12">{{ prompts.answer }}</textarea></label><label>Knowledge answer prompt<textarea name="direct_answer" rows="14">{{ prompts.direct_answer }}</textarea></label><button class="btn outline">Save assistant instructions</button><span class="status" id="prompts-status"></span></form>
     </details>
   </main>
 </div>

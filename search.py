@@ -75,13 +75,30 @@ def _run(app, job_id, query, history, model, allowed_only):
         context = "\n\n".join(f"{x['role'].title()}: {x['content']}" for x in history[-12:])
         effective_query = query if not context else f"Conversation context:\n{context}\n\nCurrent request:\n{query}"
         planning = render(prompts["planning"], market=market, scope=scope, query=effective_query)
-        event(job_id, "phase", "running", "Planning focused searches", phase="Planning research")
+        event(job_id, "phase", "running", "Understanding and improving the request", phase="Planning response")
         parsed = ollama_json(settings["ollama_url"], model, planning)
+        rewritten_question = clean_text(parsed.get("rewritten_question"), effective_query)
+        requirements = clean_items(parsed.get("requirements", []), 8)
+        subquestions = clean_items(parsed.get("subquestions", []), 5)
+        needs_web = parsed.get("needs_web") is True
         queries = clean_queries(parsed.get("queries", []))
-        if not queries:
+        if needs_web and not queries:
             queries = [query, f"{query} authoritative source", f"{query} {market}"]
         queries = queries[:6]
-        event(job_id, "reasoning", "summary", f"Planned {len(queries)} search paths", "; ".join(queries))
+        route = "web research" if needs_web else "model knowledge"
+        event(job_id, "reasoning", "summary", f"Using {route}", rewritten_question, phase="Planning complete")
+        if subquestions:
+            event(job_id, "reasoning", "summary", f"Identified {len(subquestions)} supporting questions", "; ".join(subquestions))
+
+        if not needs_web:
+            direct_prompt = direct_answer_prompt(prompts, settings, market, effective_query, rewritten_question,
+                                                 requirements, subquestions, "Not needed for this request")
+            event(job_id, "phase", "running", "Answering from model knowledge", phase="Producing answer")
+            answer = ollama_text(settings["ollama_url"], model, direct_prompt)
+            update(job_id, status="completed", phase="Complete", message=answer, sources=[],
+                   steps=[f"Ollama model: {model}", "Route: model knowledge", f"Clarified request: {rewritten_question}"], completed_at=now())
+            event(job_id, "phase", "returned", "Answer completed", phase="Complete")
+            return
 
         evidence = []
         seen = set()
@@ -91,7 +108,7 @@ def _run(app, job_id, query, history, model, allowed_only):
             for search_query in queries:
                 event(job_id, "search", "initiated", search_query)
                 try:
-                    rows = DDGS(timeout=12).text(search_query, region="wt-wt", safesearch="moderate", max_results=settings["results_per_query"], backend=settings["search_backend"])
+                    rows = list(DDGS(timeout=12).text(search_query, region="wt-wt", safesearch="moderate", max_results=settings["results_per_query"], backend=settings["search_backend"]) or [])
                     event(job_id, "search", "returned", search_query, f"{len(rows)} results returned")
                 except Exception as exc:
                     event(job_id, "search", "failed", search_query, str(exc))
@@ -110,7 +127,14 @@ def _run(app, job_id, query, history, model, allowed_only):
                     break
                 source_id = len(evidence) + 1
                 event(job_id, "site", "initiated", title, f"Opening source {source_id}", url, "Reading sites")
-                text = read_page(url) or snippet
+                try:
+                    text = read_page(url) or snippet
+                except requests.RequestException as exc:
+                    event(job_id, "site", "failed", title, request_error(exc), url)
+                    text = snippet
+                except Exception as exc:
+                    event(job_id, "site", "failed", title, str(exc), url)
+                    text = snippet
                 if len(text.strip()) < 40:
                     event(job_id, "site", "unreadable", title, "No readable evidence", url)
                     continue
@@ -120,9 +144,19 @@ def _run(app, job_id, query, history, model, allowed_only):
                 break
 
         if not evidence:
-            raise RuntimeError("No readable web evidence was found. Check network access, search backend, and site filters.")
+            direct_prompt = direct_answer_prompt(prompts, settings, market, effective_query, rewritten_question,
+                                                 requirements, subquestions,
+                                                 "Web research returned no readable evidence; answer cautiously from model knowledge")
+            event(job_id, "phase", "running", "Web unavailable; using model knowledge", phase="Producing answer")
+            answer = ollama_text(settings["ollama_url"], model, direct_prompt)
+            update(job_id, status="completed", phase="Complete", message=answer, sources=[],
+                   steps=[f"Ollama model: {model}", "Route: knowledge fallback after web failure", f"Clarified request: {rewritten_question}"], completed_at=now())
+            event(job_id, "phase", "returned", "Fallback answer completed", phase="Complete")
+            return
         evidence_text = "\n\n---\n\n".join(f"[{x['source_id']}] {x['title']}\nURL: {x['url']}\nFound via: {x['query']}\nContent: {x['text']}" for x in evidence)
-        answer_prompt = render(prompts["answer"], date=date.today(), market=market, scope=scope, query=effective_query, evidence=evidence_text[:60_000])
+        answer_prompt = render(prompts["answer"], date=date.today(), market=market, scope=scope, query=effective_query,
+                               rewritten_question=rewritten_question, requirements="; ".join(requirements) or "None specified",
+                               subquestions="; ".join(subquestions) or "None", evidence=evidence_text[:60_000])
         instructions = settings["general_search_instructions"].strip()
         if instructions:
             answer_prompt = f"Persistent user instructions:\n{instructions}\n\n{answer_prompt}"
@@ -167,6 +201,14 @@ def read_page(url):
     return " ".join(soup.get_text(" ", strip=True).split())
 
 
+def request_error(exc):
+    """Return a useful, bounded message without leaking a response body."""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        return f"HTTP {response.status_code}: {response.reason or 'request failed'}"
+    return str(exc)
+
+
 def public_url(url):
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -193,3 +235,22 @@ def domains(value):
 
 def clean_queries(values):
     return list(dict.fromkeys(" ".join(str(x).split())[:300] for x in values if str(x).strip()))
+
+
+def clean_items(values, limit):
+    if not isinstance(values, list):
+        return []
+    return list(dict.fromkeys(" ".join(str(x).split())[:500] for x in values if str(x).strip()))[:limit]
+
+
+def clean_text(value, fallback):
+    value = " ".join(str(value or "").split()).strip()
+    return value[:4000] or fallback
+
+
+def direct_answer_prompt(prompts, settings, market, query, rewritten_question, requirements, subquestions, web_status):
+    prompt = render(prompts["direct_answer"], date=date.today(), market=market, query=query,
+                    rewritten_question=rewritten_question, requirements="; ".join(requirements) or "None specified",
+                    subquestions="; ".join(subquestions) or "None", web_status=web_status)
+    instructions = settings["general_search_instructions"].strip()
+    return f"Persistent user instructions:\n{instructions}\n\n{prompt}" if instructions else prompt
