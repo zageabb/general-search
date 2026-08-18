@@ -16,7 +16,7 @@
     .document-picker label { flex: 0 0 auto; padding: 8px 12px; }
     .document-picker span, .attachments { color: var(--muted); font-size: 11px; }
     .attachments { margin: 5px 0 10px; }
-    @media (max-width: 720px) { .chat-header .controls { display: none; } }
+    @media (max-width: 720px) { .chat-header .controls { display: none; } .save-chat { margin-left: auto; } }
   </style>
 </head>
 <body>
@@ -32,13 +32,12 @@
         <div id="history-list" class="history-list"></div>
       </aside>
       <div class="chat-main">
-        <header class="chat-header"><div class="min"><span class="label">Active conversation</span><h2 id="active-title">New research</h2></div><div class="controls"><label>Model<select id="model"><option>{{ settings.model }}</option></select></label><label class="switch"><input type="checkbox" id="allowed-only"> Allowed sites only</label></div></header>
+        <header class="chat-header"><div class="min"><span class="label">Active conversation</span><h2 id="active-title">New research</h2></div><button class="btn outline save-chat" type="button" id="download" disabled>Save chat .md</button><div class="controls"><label>Model<select id="model"><option>{{ settings.model }}</option></select></label><label class="switch"><input type="checkbox" id="allowed-only"> Allowed sites only</label></div></header>
         <div id="conversation" class="conversation" aria-live="polite"></div>
         <form id="search-form" class="composer"><textarea id="query" rows="3" placeholder="Ask a question, explore a subject, draft content, or request code…"></textarea><div class="document-picker"><label class="btn outline" for="documents">Attach documents</label><input id="documents" type="file" multiple accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.eml,.msg"><span id="document-status">No documents attached</span></div><div class="composer-footer"><span id="context-summary">0 messages in context</span><button class="btn primary" id="submit">Ask</button></div></form>
       </div>
       <aside class="runtime"><div class="runtime-header"><div><span class="label">Live research activity</span><strong id="phase">Ready</strong></div><span id="elapsed">0:00</span></div><div class="counts"><div><strong id="initiated">0</strong><span>Initiated</span></div><div><strong id="returned">0</strong><span>Returned</span></div><div><strong id="failed">0</strong><span>Failed</span></div></div><div id="events" class="events"><p>Research activity will appear here after you send a question.</p></div></aside>
     </section>
-    <section id="save-actions" class="panel hidden"><div><h3>Latest research result</h3><p>Save a portable Markdown copy with its source list.</p></div><button class="btn outline" id="download">Download .md</button></section>
     <details id="settings" class="panel settings-panel">
       <summary>Search settings and instructions</summary>
       <form id="settings-form">

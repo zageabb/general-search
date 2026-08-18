@@ -91,17 +91,38 @@ def prompts():
 @app.post("/api/export")
 def export():
     payload = request.get_json(silent=True) or {}
-    query = str(payload.get("query") or "").strip()
-    answer = str(payload.get("answer") or "").strip()
-    title = str(payload.get("title") or "General Search Result").strip()[:120]
-    if not query or not answer:
-        return jsonify(ok=False, message="Run a search before exporting."), 400
-    lines = [f"# {title}", "", f"Generated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}", "", "## Research request", "", query, "", "## Answer", "", answer]
-    sources = payload.get("sources") or []
-    if sources:
-        lines += ["", "## Sources", ""]
-        for index, source in enumerate(sources[:50], 1):
-            lines.append(f"{index}. [{source.get('title') or source.get('url')}]({source.get('url')})")
+    title = " ".join(str(payload.get("title") or "General Search Chat").split())[:120]
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        messages = [item for item in messages[:100] if isinstance(item, dict) and item.get("role") in {"user", "assistant"} and str(item.get("content") or "").strip()]
+        if not messages:
+            return jsonify(ok=False, message="Start a chat before saving it."), 400
+        lines = [f"# {title}", "", f"Saved: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}"]
+        document_names = [str(name).strip() for name in (payload.get("document_names") or []) if str(name).strip()][:50]
+        if document_names:
+            lines += ["", "**Documents in context:** " + ", ".join(document_names)]
+        for item in messages:
+            heading = "You" if item["role"] == "user" else "General Search"
+            lines += ["", f"## {heading}", "", str(item.get("content") or "").strip()]
+            attachments = [str(name).strip() for name in (item.get("attachments") or []) if str(name).strip()][:50]
+            if attachments:
+                lines += ["", "**Attachments:** " + ", ".join(attachments)]
+            sources = [source for source in (item.get("sources") or []) if isinstance(source, dict) and source.get("url")][:50]
+            if sources:
+                lines += ["", "### Sources", ""]
+                for index, source in enumerate(sources, 1):
+                    lines.append(f"{index}. [{source.get('title') or source['url']}]({source['url']})")
+    else:
+        query = str(payload.get("query") or "").strip()
+        answer = str(payload.get("answer") or "").strip()
+        if not query or not answer:
+            return jsonify(ok=False, message="Run a search before exporting."), 400
+        lines = [f"# {title}", "", f"Generated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}", "", "## Research request", "", query, "", "## Answer", "", answer]
+        sources = [source for source in (payload.get("sources") or []) if isinstance(source, dict) and source.get("url")][:50]
+        if sources:
+            lines += ["", "## Sources", ""]
+            for index, source in enumerate(sources, 1):
+                lines.append(f"{index}. [{source.get('title') or source['url']}]({source['url']})")
     content = ("\n".join(lines).strip() + "\n").encode()
     filename = "".join(character if character.isalnum() or character in " .-_" else "-" for character in title).strip(" .-")
     return send_file(BytesIO(content), mimetype="text/markdown", as_attachment=True, download_name=(filename or "general_search_result") + ".md")
