@@ -1,0 +1,4 @@
+const $ = (id) => document.getElementById(id);
+async function json(response){const text=await response.text();try{return text?JSON.parse(text):{}}catch{return {message:text}}}
+$("settings-form").addEventListener("submit",async event=>{event.preventDefault();const response=await fetch("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(new FormData(event.currentTarget)))}),data=await json(response);$("settings-status").textContent=data.message||"Could not save."});
+$("prompts-form").addEventListener("submit",async event=>{event.preventDefault();const response=await fetch("/api/prompts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompts:Object.fromEntries(new FormData(event.currentTarget))})}),data=await json(response);$("prompts-status").textContent=data.message||"Could not save."});

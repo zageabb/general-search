@@ -23,7 +23,7 @@
 <div class="site-shell">
   <nav class="app-nav">
     <a class="brand-lockup" href="/"><span class="brand-mark">GS</span><span>General Search</span></a>
-    <div class="nav-links"><a class="active" href="#workspace">Search</a><a href="#settings">Settings</a></div>
+    <div class="nav-links"><a class="active" href="/">Search</a><a href="/settings">Settings</a></div>
   </nav>
   <main>
     <section class="research-shell" id="workspace" data-default-model="{{ settings.model }}">
@@ -39,21 +39,6 @@
       <aside class="runtime"><div class="runtime-header"><div><span class="label">Live research activity</span><strong id="phase">Ready</strong></div><span id="elapsed">0:00</span></div><div class="counts"><div><strong id="initiated">0</strong><span>Initiated</span></div><div><strong id="returned">0</strong><span>Returned</span></div><div><strong id="failed">0</strong><span>Failed</span></div></div><div id="events" class="events"><p>Research activity will appear here after you send a question.</p></div></aside>
     </section>
     <section id="save-actions" class="panel hidden"><div><h3>Latest research result</h3><p>Save a portable Markdown copy with its source list.</p></div><button class="btn outline" id="download">Download .md</button></section>
-    <details id="settings" class="panel settings-panel">
-      <summary>Search settings and instructions</summary>
-      <form id="settings-form">
-        <div class="grid">
-          <label>Ollama URL<input name="ollama_url" value="{{ settings.ollama_url }}"></label><label>Default model<input name="model" value="{{ settings.model }}"></label>
-          <label>Search backend<input name="search_backend" value="{{ settings.search_backend }}"></label><label>Research rounds<input type="number" min="1" max="5" name="max_search_rounds" value="{{ settings.max_search_rounds }}"></label>
-          <label>Results per query<input type="number" min="2" max="10" name="results_per_query" value="{{ settings.results_per_query }}"></label><label>Pages to read<input type="number" min="1" max="30" name="max_pages_to_read" value="{{ settings.max_pages_to_read }}"></label>
-          <label>Country<input name="market_country" value="{{ settings.market_country }}"></label><label>Region<input name="market_region" value="{{ settings.market_region }}"></label><label>City<input name="market_city" value="{{ settings.market_city }}"></label>
-          <label class="wide">Allowed websites<textarea name="allowed_domains" rows="5">{{ settings.allowed_domains }}</textarea></label><label class="wide">Blocked websites<textarea name="blocked_domains" rows="5">{{ settings.blocked_domains }}</textarea></label>
-          <label class="full">Persistent instructions<textarea name="general_search_instructions" rows="5">{{ settings.general_search_instructions }}</textarea></label>
-        </div><button class="btn outline">Save search settings</button><span class="status" id="settings-status"></span>
-      </form>
-      <hr>
-      <form id="prompts-form"><label>Request routing and planning prompt<textarea name="planning" rows="16">{{ prompts.planning }}</textarea></label><label>Web answer synthesis prompt<textarea name="answer" rows="12">{{ prompts.answer }}</textarea></label><label>Knowledge answer prompt<textarea name="direct_answer" rows="14">{{ prompts.direct_answer }}</textarea></label><label>Final answer review prompt<textarea name="review" rows="16">{{ prompts.review }}</textarea></label><button class="btn outline">Save assistant instructions</button><span class="status" id="prompts-status"></span></form>
-    </details>
   </main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>

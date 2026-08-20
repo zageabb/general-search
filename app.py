@@ -18,7 +18,12 @@ app.config["MAX_CONTENT_LENGTH"] = 30_000_000
 
 @app.get("/")
 def index():
-    return render_template("index.html", settings=get_settings(), prompts=PROMPTS.load())
+    return render_template("index.html", settings=get_settings())
+
+
+@app.get("/settings")
+def settings_page():
+    return render_template("settings.html", settings=get_settings(), prompts=PROMPTS.load())
 
 
 @app.post("/api/search")
