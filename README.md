@@ -13,7 +13,7 @@ cp settings.example.json settings.json
 .venv/bin/python app.py
 ```
 
-Open [http://127.0.0.1:5053](http://127.0.0.1:5053). Set your Ollama URL and model in the app’s Settings panel. The active port defaults to `5053`; override it with the `PORT` environment variable if needed.
+Open [http://127.0.0.1:5053](http://127.0.0.1:5053). Set your Ollama URL and model on the dedicated Settings page. The active port defaults to `5053`; override it with the `PORT` environment variable if needed.
 
 ## Notes
 
@@ -21,4 +21,5 @@ Open [http://127.0.0.1:5053](http://127.0.0.1:5053). Set your Ollama URL and mod
 - Use **Save chat .md** in the active conversation header to download the full conversation, including attachments and source links, as a shareable Markdown file.
 - Chat uploads support PDF, DOCX, XLSX, CSV, TXT, Markdown, EML, and MSG. Extracted text is bounded and retained in browser-local conversation context for follow-up questions.
 - Runtime settings are written to the ignored `settings.json` file.
+- Each fetched page is checked for query-specific usefulness before it is used. Useful domains are learned in the allowed list; failed, unreadable, or unusable domains are moved to the exclusion list. A domain is kept in only one list at a time.
 - The app blocks loopback and private-network page fetching to reduce SSRF risk. Ollama itself may still be configured on a private address.

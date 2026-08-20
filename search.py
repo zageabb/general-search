@@ -14,7 +14,7 @@ import requests
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 
-from settings_store import PROMPTS, get_settings, render
+from settings_store import PROMPTS, get_settings, record_domain_verdict, render
 
 
 JOBS: dict[str, dict] = {}
@@ -136,15 +136,26 @@ def _run(app, job_id, query, history, model, allowed_only, uploaded_context=""):
                     text = read_page(url) or snippet
                 except requests.RequestException as exc:
                     event(job_id, "site", "failed", title, request_error(exc), url)
-                    text = snippet
+                    record_domain_verdict(hostname(url), False)
+                    continue
                 except Exception as exc:
                     event(job_id, "site", "failed", title, str(exc), url)
-                    text = snippet
+                    record_domain_verdict(hostname(url), False)
+                    continue
                 if len(text.strip()) < 40:
                     event(job_id, "site", "unreadable", title, "No readable evidence", url)
+                    record_domain_verdict(hostname(url), False)
                     continue
+                verdict, reason = review_source(prompts, settings, model, source_query, title, url, text)
+                if verdict != "useful":
+                    if verdict == "unusable":
+                        record_domain_verdict(hostname(url), False)
+                        reason = f"Unusable: {reason}"
+                    event(job_id, "site", "failed", title, reason, url)
+                    continue
+                record_domain_verdict(hostname(url), True)
                 evidence.append({"source_id": source_id, "title": title, "url": url, "query": source_query, "text": text[:12_000]})
-                event(job_id, "site", "returned", title, f"Source {source_id} retained", url)
+                event(job_id, "site", "returned", title, f"Source {source_id} retained · {reason}", url)
             if evidence or round_number == settings["max_search_rounds"]:
                 break
 
@@ -284,3 +295,14 @@ def review_answer(job_id, prompts, settings, model, query, rewritten_question, r
     except Exception as exc:
         event(job_id, "reasoning", "failed", "Final answer review unavailable", str(exc))
         return answer
+
+
+def review_source(prompts, settings, model, query, title, url, content):
+    prompt = render(prompts["source_review"], query=query, title=title, url=url, content=content[:12_000])
+    try:
+        result = ollama_json(settings["ollama_url"], model, prompt)
+    except Exception as exc:
+        return "review_failed", f"Quality check failed: {exc}"
+    verdict = str(result.get("verdict") or "").strip().lower()
+    reason = clean_text(result.get("reason"), "No useful query-related evidence found")[:300]
+    return ("useful", reason) if verdict == "useful" else ("unusable", reason)
