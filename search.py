@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import re
 import socket
 import threading
@@ -107,10 +108,13 @@ def _run(app, job_id, query, history, model, allowed_only, uploaded_context=""):
 
         evidence = []
         seen = set()
+        attempted_queries = []
+        current_queries = queries
         for round_number in range(1, settings["max_search_rounds"] + 1):
             event(job_id, "phase", "running", f"Research round {round_number}", phase=f"Searching — round {round_number}")
             candidates = []
-            for search_query in queries:
+            for search_query in current_queries:
+                attempted_queries.append(search_query)
                 event(job_id, "search", "initiated", search_query)
                 try:
                     rows = list(DDGS(timeout=12).text(search_query, region="wt-wt", safesearch="moderate", max_results=settings["results_per_query"], backend=settings["search_backend"]) or [])
@@ -126,38 +130,64 @@ def _run(app, job_id, query, history, model, allowed_only, uploaded_context=""):
                     if allowed and not any(host == d or host.endswith("." + d) for d in allowed):
                         continue
                     seen.add(url)
-                    candidates.append((str(row.get("title") or url), url, str(row.get("body") or ""), search_query))
-            for title, url, snippet, source_query in candidates:
-                if len(evidence) >= settings["max_pages_to_read"]:
+                    candidates.append({"title": str(row.get("title") or url), "url": url,
+                                       "snippet": str(row.get("body") or ""), "query": search_query})
+            ranked = rank_candidates(candidates, rewritten_question, requirements, subquestions)
+            remaining_rounds = settings["max_search_rounds"] - round_number + 1
+            remaining_pages = settings["max_pages_to_read"] - len(evidence)
+            round_budget = remaining_pages if remaining_rounds == 1 else max(1, math.ceil(remaining_pages / remaining_rounds))
+            retained_this_round = 0
+            for candidate in ranked:
+                if len(evidence) >= settings["max_pages_to_read"] or retained_this_round >= round_budget:
                     break
+                title, url, snippet, source_query = (candidate[key] for key in ("title", "url", "snippet", "query"))
                 source_id = len(evidence) + 1
-                event(job_id, "site", "initiated", title, f"Opening source {source_id}", url, "Reading sites")
+                event(job_id, "site", "initiated", title,
+                      f"Opening candidate ranked {candidate['rank']} · relevance {candidate['score']:.2f}", url, "Reading sites")
                 try:
                     text = read_page(url) or snippet
                 except requests.RequestException as exc:
                     event(job_id, "site", "failed", title, request_error(exc), url)
-                    record_domain_verdict(hostname(url), False)
                     continue
                 except Exception as exc:
                     event(job_id, "site", "failed", title, str(exc), url)
-                    record_domain_verdict(hostname(url), False)
                     continue
                 if len(text.strip()) < 40:
                     event(job_id, "site", "unreadable", title, "No readable evidence", url)
-                    record_domain_verdict(hostname(url), False)
                     continue
-                verdict, reason = review_source(prompts, settings, model, source_query, title, url, text)
+                passages = best_passages(text, research_text(rewritten_question, requirements, subquestions), limit=5)
+                focused_text = "\n\n".join(passages) or text[:12_000]
+                verdict, reason, claims = analyse_source(prompts, settings, model, source_query, title, url, focused_text)
                 if verdict != "useful":
                     if verdict == "unusable":
-                        record_domain_verdict(hostname(url), False)
-                        reason = f"Unusable: {reason}"
+                        reason = f"Not retained: {reason}"
                     event(job_id, "site", "failed", title, reason, url)
                     continue
                 record_domain_verdict(hostname(url), True)
-                evidence.append({"source_id": source_id, "title": title, "url": url, "query": source_query, "text": text[:12_000]})
+                evidence.append({"source_id": source_id, "title": title, "url": url, "query": source_query,
+                                 "passages": passages, "claims": claims, "text": focused_text[:12_000],
+                                 "relevance": candidate["score"]})
+                retained_this_round += 1
                 event(job_id, "site", "returned", title, f"Source {source_id} retained · {reason}", url)
-            if evidence or round_number == settings["max_search_rounds"]:
+            if round_number == settings["max_search_rounds"] or len(evidence) >= settings["max_pages_to_read"]:
                 break
+            coverage = assess_coverage(prompts, settings, model, rewritten_question, requirements, subquestions,
+                                       attempted_queries, evidence)
+            gaps = clean_items(coverage.get("gaps", []), 6)
+            follow_ups = clean_queries(coverage.get("queries", []))[:4]
+            if coverage.get("complete") is True:
+                event(job_id, "reasoning", "returned", "Evidence coverage is sufficient",
+                      "; ".join(clean_items(coverage.get("covered", []), 6)) or "Core request supported")
+                break
+            if gaps:
+                event(job_id, "reasoning", "summary", f"Research found {len(gaps)} evidence gap(s)", "; ".join(gaps))
+            if not follow_ups:
+                if evidence:
+                    event(job_id, "reasoning", "summary", "No productive follow-up search identified",
+                          "Proceeding with the available evidence and explicit uncertainty")
+                    break
+                follow_ups = [f"{query} primary source", f"{query} official information"]
+            current_queries = follow_ups
 
         if not evidence:
             direct_prompt = direct_answer_prompt(prompts, settings, market, effective_query, rewritten_question,
@@ -171,7 +201,7 @@ def _run(app, job_id, query, history, model, allowed_only, uploaded_context=""):
                    steps=[f"Ollama model: {model}", "Route: knowledge fallback after web failure", f"Clarified request: {rewritten_question}", "Final answer reviewed"], completed_at=now())
             event(job_id, "phase", "returned", "Fallback answer completed", phase="Complete")
             return
-        evidence_text = "\n\n---\n\n".join(f"[{x['source_id']}] {x['title']}\nURL: {x['url']}\nFound via: {x['query']}\nContent: {x['text']}" for x in evidence)
+        evidence_text = evidence_ledger(evidence)
         answer_prompt = render(prompts["answer"], date=date.today(), market=market, scope=scope, query=effective_query,
                                rewritten_question=rewritten_question, requirements="; ".join(requirements) or "None specified",
                                subquestions="; ".join(subquestions) or "None", evidence=evidence_text[:60_000])
@@ -182,8 +212,11 @@ def _run(app, job_id, query, history, model, allowed_only, uploaded_context=""):
         answer = ollama_text(settings["ollama_url"], model, answer_prompt)
         answer = review_answer(job_id, prompts, settings, model, effective_query, rewritten_question,
                                requirements, subquestions, answer, evidence_text)
+        answer = verify_citations(job_id, prompts, settings, model, rewritten_question, answer, evidence_text, evidence)
         sources = [{"source_id": x["source_id"], "title": x["title"], "url": x["url"]} for x in evidence]
-        update(job_id, status="completed", phase="Complete", message=answer, sources=sources, steps=[f"Ollama model: {model}", f"Planned {len(queries)} searches", f"Retained {len(evidence)} readable sources", "Final answer reviewed"], completed_at=now())
+        update(job_id, status="completed", phase="Complete", message=answer, sources=sources,
+               steps=[f"Ollama model: {model}", f"Ran {len(attempted_queries)} targeted searches",
+                      f"Retained {len(evidence)} ranked sources", "Evidence coverage and citations reviewed"], completed_at=now())
         event(job_id, "phase", "returned", "Research answer completed", phase="Complete")
     except Exception as exc:
         update(job_id, status="failed", phase="Failed", error=str(exc), completed_at=now())
@@ -218,7 +251,8 @@ def read_page(url):
     soup = BeautifulSoup(response.content[:5_000_000], "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "noscript"]):
         tag.decompose()
-    return " ".join(soup.get_text(" ", strip=True).split())
+    blocks = [" ".join(block.split()) for block in soup.get_text("\n", strip=True).splitlines()]
+    return "\n".join(block for block in blocks if len(block) >= 20)
 
 
 def request_error(exc):
@@ -253,7 +287,92 @@ def domains(value):
     return list(dict.fromkeys(filter(None, (hostname(x if "://" in x else "https://" + x) for x in re.split(r"[\n,]+", str(value))))))
 
 
+STOP_WORDS = {"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "is", "it",
+              "of", "on", "or", "that", "the", "this", "to", "was", "what", "when", "where", "which", "who",
+              "why", "will", "with", "you", "your"}
+
+
+def terms(value):
+    return {word for word in re.findall(r"[a-z0-9][a-z0-9_-]{1,}", str(value).lower()) if word not in STOP_WORDS}
+
+
+def research_text(question, requirements, subquestions):
+    return " ".join([question, *requirements, *subquestions])
+
+
+def rank_candidates(candidates, question, requirements=None, subquestions=None):
+    """Rank search results for relevance, authority, and source diversity."""
+    target = terms(research_text(question, requirements or [], subquestions or []))
+    scored = []
+    for candidate in candidates:
+        title_terms = terms(candidate.get("title", ""))
+        snippet_terms = terms(candidate.get("snippet", ""))
+        query_terms = terms(candidate.get("query", ""))
+        host = hostname(candidate.get("url", ""))
+        overlap = len(target & title_terms) * 3 + len(target & snippet_terms) + len(query_terms & (title_terms | snippet_terms))
+        denominator = max(1, len(target))
+        authority = 1.25 if (host.endswith(".gov") or host.endswith(".gov.uk") or host.endswith(".edu") or
+                             host.endswith(".ac.uk")) else 0.0
+        path = urlparse(candidate.get("url", "")).path.lower()
+        primary_hint = 0.6 if any(token in path for token in ("/docs", "/documentation", "/research", "/report", "/news")) else 0.0
+        candidate = dict(candidate)
+        candidate["score"] = round(overlap / denominator + authority + primary_hint, 3)
+        scored.append(candidate)
+    scored.sort(key=lambda item: (-item["score"], item.get("title", "").lower()))
+    # Interleave domains so one publisher cannot consume the reading budget.
+    ranked, pending, domain_counts = [], scored[:], {}
+    while pending:
+        best_index = max(range(len(pending)), key=lambda index: pending[index]["score"] - domain_counts.get(hostname(pending[index]["url"]), 0) * 0.75)
+        item = pending.pop(best_index)
+        host = hostname(item["url"])
+        domain_counts[host] = domain_counts.get(host, 0) + 1
+        item["rank"] = len(ranked) + 1
+        ranked.append(item)
+    return ranked
+
+
+def best_passages(content, query, limit=5, max_chars=9_000):
+    """Return the most query-relevant, de-duplicated passages from a page."""
+    target = terms(query)
+    raw = [" ".join(part.split()) for part in re.split(r"\n{1,}|(?<=[.!?])\s+(?=[A-Z0-9])", str(content))]
+    passages = [part for part in raw if 40 <= len(part) <= 2_500]
+    if not passages:
+        passages = [" ".join(str(content).split())[:max_chars]] if str(content).strip() else []
+    scored = []
+    for index, passage in enumerate(passages):
+        passage_terms = terms(passage)
+        coverage = len(target & passage_terms) / max(1, len(target))
+        density = len(target & passage_terms) / max(1, len(passage_terms))
+        number_bonus = 0.08 if re.search(r"\b\d[\d,.%]*\b", passage) else 0
+        scored.append((coverage * 3 + density + number_bonus, index, passage))
+    selected, selected_terms, size = [], [], 0
+    for score, index, passage in sorted(scored, key=lambda row: (-row[0], row[1])):
+        p_terms = terms(passage)
+        if any(len(p_terms & prior) / max(1, len(p_terms | prior)) > 0.82 for prior in selected_terms):
+            continue
+        if size + len(passage) > max_chars and selected:
+            continue
+        selected.append((index, passage))
+        selected_terms.append(p_terms)
+        size += len(passage)
+        if len(selected) >= limit:
+            break
+    return [passage for _, passage in sorted(selected)]
+
+
+def evidence_ledger(evidence):
+    rows = []
+    for item in evidence:
+        claims = "\n".join(f"- {claim}" for claim in item.get("claims", [])) or "- No claims pre-extracted"
+        passages = "\n\n".join(f"Passage {index}: {passage}" for index, passage in enumerate(item.get("passages", []), 1))
+        rows.append(f"[{item['source_id']}] {item['title']}\nURL: {item['url']}\nFound via: {item['query']}\n"
+                    f"Extracted claims:\n{claims}\nRelevant passages:\n{passages or item.get('text', '')}")
+    return "\n\n---\n\n".join(rows)
+
+
 def clean_queries(values):
+    if not isinstance(values, list):
+        return []
     return list(dict.fromkeys(" ".join(str(x).split())[:300] for x in values if str(x).strip()))
 
 
@@ -297,12 +416,60 @@ def review_answer(job_id, prompts, settings, model, query, rewritten_question, r
         return answer
 
 
-def review_source(prompts, settings, model, query, title, url, content):
+def assess_coverage(prompts, settings, model, rewritten_question, requirements, subquestions, queries, evidence):
+    if not evidence:
+        return {"complete": False, "covered": [], "gaps": ["No readable evidence retained"], "queries": []}
+    prompt = render(prompts["research_review"], rewritten_question=rewritten_question,
+                    requirements="; ".join(requirements) or "None specified",
+                    subquestions="; ".join(subquestions) or "None", queries="; ".join(queries),
+                    evidence=evidence_ledger(evidence)[:35_000])
+    try:
+        return ollama_json(settings["ollama_url"], model, prompt)
+    except Exception:
+        return {"complete": False, "covered": [], "gaps": [], "queries": []}
+
+
+def verify_citations(job_id, prompts, settings, model, rewritten_question, answer, evidence_text, evidence):
+    event(job_id, "phase", "running", "Validating claims and citations", phase="Verifying citations")
+    valid_ids = {str(item["source_id"]) for item in evidence}
+    cited_ids = set(re.findall(r"\[(\d+)\]", answer))
+    invalid_ids = sorted(cited_ids - valid_ids)
+    if invalid_ids:
+        event(job_id, "reasoning", "summary", "Draft contained invalid citation IDs", ", ".join(invalid_ids))
+    prompt = render(prompts["citation_review"], rewritten_question=rewritten_question,
+                    evidence=evidence_text[:55_000], answer=answer[:30_000])
+    try:
+        result = ollama_json(settings["ollama_url"], model, prompt)
+        final_answer = str(result.get("final_answer") or "").strip()
+        issues = clean_items(result.get("issues", []), 8)
+        if not final_answer:
+            event(job_id, "reasoning", "failed", "Citation verification returned no answer", "Using reviewed draft")
+            return answer
+        final_ids = set(re.findall(r"\[(\d+)\]", final_answer))
+        if final_ids - valid_ids:
+            event(job_id, "reasoning", "failed", "Citation verification introduced invalid IDs", "Using reviewed draft")
+            return answer
+        event(job_id, "reasoning", "returned", "Citation verification passed" if result.get("valid") is True else "Citations corrected",
+              "; ".join(issues) if issues else "Claims checked against retained passages")
+        return final_answer
+    except Exception as exc:
+        event(job_id, "reasoning", "failed", "Citation verification unavailable", str(exc))
+        return answer
+
+
+def analyse_source(prompts, settings, model, query, title, url, content):
     prompt = render(prompts["source_review"], query=query, title=title, url=url, content=content[:12_000])
     try:
         result = ollama_json(settings["ollama_url"], model, prompt)
     except Exception as exc:
-        return "review_failed", f"Quality check failed: {exc}"
+        return "review_failed", f"Quality check failed: {exc}", []
     verdict = str(result.get("verdict") or "").strip().lower()
     reason = clean_text(result.get("reason"), "No useful query-related evidence found")[:300]
-    return ("useful", reason) if verdict == "useful" else ("unusable", reason)
+    claims = clean_items(result.get("claims", []), 5)
+    return ("useful", reason, claims) if verdict == "useful" else ("unusable", reason, [])
+
+
+def review_source(prompts, settings, model, query, title, url, content):
+    """Backward-compatible two-value source review API."""
+    verdict, reason, _ = analyse_source(prompts, settings, model, query, title, url, content)
+    return verdict, reason

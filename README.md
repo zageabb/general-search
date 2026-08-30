@@ -21,5 +21,8 @@ Open [http://127.0.0.1:5053](http://127.0.0.1:5053). Set your Ollama URL and mod
 - Use **Save chat .md** in the active conversation header to download the full conversation, including attachments and source links, as a shareable Markdown file.
 - Chat uploads support PDF, DOCX, XLSX, CSV, TXT, Markdown, EML, and MSG. Extracted text is bounded and retained in browser-local conversation context for follow-up questions.
 - Runtime settings are written to the ignored `settings.json` file.
-- Each fetched page is checked for query-specific usefulness before it is used. Useful domains are learned in the allowed list; failed, unreadable, or unusable domains are moved to the exclusion list. A domain is kept in only one list at a time.
+- Search results are relevance-ranked and diversified before pages are opened. Pages are split into passages, and only the passages most relevant to the clarified request are retained.
+- Research rounds assess evidence coverage and generate targeted follow-up searches for material gaps instead of stopping after the first usable page.
+- Each retained source contributes a small evidence ledger of claims and supporting passages. A separate final pass checks inline citations against that ledger.
+- Each fetched page is checked for query-specific usefulness before it is used. Useful domains are learned in the allowed list, but a single failed or irrelevant page no longer excludes an entire domain. Excluded domains remain under explicit user control.
 - The app blocks loopback and private-network page fetching to reduce SSRF risk. Ollama itself may still be configured on a private address.
