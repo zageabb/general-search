@@ -7,9 +7,11 @@ import re
 import socket
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from datetime import date, datetime, timezone
-from urllib.parse import urlparse
+from io import BytesIO
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -20,7 +22,10 @@ from settings_store import PROMPTS, get_settings, record_domain_verdict, render
 
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
-HEADERS = {"User-Agent": "GeneralSearch/1.0 (+local research app)", "Accept": "text/html,application/xhtml+xml"}
+HEADERS = {"User-Agent": "GeneralSearch/1.0 (+local research app)",
+           "Accept": "text/html,application/xhtml+xml,application/pdf;q=0.9"}
+MAX_WEB_BYTES = 8_000_000
+MAX_REDIRECTS = 5
 
 
 def now():
@@ -131,27 +136,28 @@ def _run(app, job_id, query, history, model, allowed_only, uploaded_context=""):
                         continue
                     seen.add(url)
                     candidates.append({"title": str(row.get("title") or url), "url": url,
-                                       "snippet": str(row.get("body") or ""), "query": search_query})
+                                       "snippet": str(row.get("body") or ""), "query": search_query,
+                                       "published_at": str(row.get("date") or row.get("published") or "")})
             ranked = rank_candidates(candidates, rewritten_question, requirements, subquestions)
+            ranked = embedding_rerank(job_id, settings, ranked,
+                                      research_text(rewritten_question, requirements, subquestions))
             remaining_rounds = settings["max_search_rounds"] - round_number + 1
             remaining_pages = settings["max_pages_to_read"] - len(evidence)
             round_budget = remaining_pages if remaining_rounds == 1 else max(1, math.ceil(remaining_pages / remaining_rounds))
             retained_this_round = 0
-            for candidate in ranked:
+            shortlist_size = min(len(ranked), max(round_budget * 3, settings["max_fetch_workers"]))
+            shortlist = ranked[:shortlist_size]
+            fetched = fetch_pages(job_id, shortlist, settings["max_fetch_workers"])
+            for candidate in shortlist:
                 if len(evidence) >= settings["max_pages_to_read"] or retained_this_round >= round_budget:
                     break
                 title, url, snippet, source_query = (candidate[key] for key in ("title", "url", "snippet", "query"))
                 source_id = len(evidence) + 1
-                event(job_id, "site", "initiated", title,
-                      f"Opening candidate ranked {candidate['rank']} · relevance {candidate['score']:.2f}", url, "Reading sites")
-                try:
-                    text = read_page(url) or snippet
-                except requests.RequestException as exc:
-                    event(job_id, "site", "failed", title, request_error(exc), url)
+                page = fetched.get(url, {})
+                if page.get("error"):
+                    event(job_id, "site", "failed", title, page["error"], url)
                     continue
-                except Exception as exc:
-                    event(job_id, "site", "failed", title, str(exc), url)
-                    continue
+                text = page.get("text") or snippet
                 if len(text.strip()) < 40:
                     event(job_id, "site", "unreadable", title, "No readable evidence", url)
                     continue
@@ -166,7 +172,9 @@ def _run(app, job_id, query, history, model, allowed_only, uploaded_context=""):
                 record_domain_verdict(hostname(url), True)
                 evidence.append({"source_id": source_id, "title": title, "url": url, "query": source_query,
                                  "passages": passages, "claims": claims, "text": focused_text[:12_000],
-                                 "relevance": candidate["score"]})
+                                 "relevance": candidate["score"],
+                                 "published_at": page.get("published_at") or candidate.get("published_at", ""),
+                                 "content_type": page.get("content_type", "")})
                 retained_this_round += 1
                 event(job_id, "site", "returned", title, f"Source {source_id} retained · {reason}", url)
             if round_number == settings["max_search_rounds"] or len(evidence) >= settings["max_pages_to_read"]:
@@ -241,18 +249,105 @@ def ollama_json(base_url, model, prompt):
         return {}
 
 
-def read_page(url):
-    if not public_url(url):
-        return ""
-    response = requests.get(url, headers=HEADERS, timeout=15, allow_redirects=True)
-    response.raise_for_status()
-    if "html" not in response.headers.get("content-type", "").lower():
-        return ""
-    soup = BeautifulSoup(response.content[:5_000_000], "html.parser")
+def fetch_pages(job_id, candidates, workers):
+    results = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(int(workers), 8))) as executor:
+        future_map = {}
+        for candidate in candidates:
+            event(job_id, "site", "initiated", candidate["title"],
+                  f"Opening candidate ranked {candidate['rank']} · relevance {candidate['score']:.2f}",
+                  candidate["url"], "Reading sites")
+            future_map[executor.submit(fetch_page, candidate["url"])] = candidate["url"]
+        for future in as_completed(future_map):
+            url = future_map[future]
+            try:
+                results[url] = future.result()
+            except Exception as exc:
+                results[url] = {"text": "", "error": request_error(exc)}
+    return results
+
+
+def fetch_page(url):
+    """Fetch a bounded public HTML or PDF page, validating every redirect target."""
+    current = url
+    response = None
+    for _ in range(MAX_REDIRECTS + 1):
+        if not public_url(current):
+            return {"text": "", "error": "Blocked non-public or invalid URL"}
+        response = requests.get(current, headers=HEADERS, timeout=(5, 20), allow_redirects=False, stream=True)
+        if response.status_code in {301, 302, 303, 307, 308}:
+            location = response.headers.get("location")
+            response.close()
+            if not location:
+                return {"text": "", "error": "Redirect response had no destination"}
+            current = urljoin(current, location)
+            continue
+        break
+    else:
+        return {"text": "", "error": f"Too many redirects (limit {MAX_REDIRECTS})"}
+    try:
+        response.raise_for_status()
+        declared_size = int(response.headers.get("content-length") or 0)
+        if declared_size > MAX_WEB_BYTES:
+            return {"text": "", "error": f"Page exceeds the {MAX_WEB_BYTES // 1_000_000} MB download limit"}
+        chunks, size = [], 0
+        for chunk in response.iter_content(chunk_size=65_536):
+            if not chunk:
+                continue
+            size += len(chunk)
+            if size > MAX_WEB_BYTES:
+                return {"text": "", "error": f"Page exceeds the {MAX_WEB_BYTES // 1_000_000} MB download limit"}
+            chunks.append(chunk)
+        payload = b"".join(chunks)
+        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+        if content_type == "application/pdf" or payload.startswith(b"%PDF-"):
+            text = extract_pdf(payload)
+            return {"text": text, "url": current, "content_type": "application/pdf", "published_at": ""}
+        if "html" not in content_type and "xhtml" not in content_type:
+            return {"text": "", "error": f"Unsupported web content type: {content_type or 'unknown'}"}
+        text, published_at = extract_html(payload)
+        return {"text": text, "url": current, "content_type": content_type, "published_at": published_at}
+    finally:
+        response.close()
+
+
+def extract_pdf(payload):
+    from pypdf import PdfReader
+
+    reader = PdfReader(BytesIO(payload))
+    sections, size = [], 0
+    for page_number, page in enumerate(reader.pages, 1):
+        if page_number > 100:
+            break
+        text = " ".join((page.extract_text() or "").split())
+        if not text:
+            continue
+        section = f"Page {page_number}: {text}"
+        sections.append(section)
+        size += len(section)
+        if size >= 120_000:
+            break
+    return "\n".join(sections)[:120_000]
+
+
+def extract_html(payload):
+    soup = BeautifulSoup(payload, "html.parser")
+    published_at = ""
+    for attributes in ({"property": "article:published_time"}, {"name": "date"},
+                       {"name": "datePublished"}, {"itemprop": "datePublished"}):
+        tag = soup.find("meta", attrs=attributes)
+        if tag and tag.get("content"):
+            published_at = str(tag["content"])[:100]
+            break
     for tag in soup(["script", "style", "nav", "footer", "noscript"]):
         tag.decompose()
     blocks = [" ".join(block.split()) for block in soup.get_text("\n", strip=True).splitlines()]
-    return "\n".join(block for block in blocks if len(block) >= 20)
+    return "\n".join(block for block in blocks if len(block) >= 20)[:120_000], published_at
+
+
+def read_page(url):
+    """Backward-compatible text-only page reader."""
+    return fetch_page(url).get("text", "")
 
 
 def request_error(exc):
@@ -265,11 +360,11 @@ def request_error(exc):
 
 def public_url(url):
     parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
         return False
     try:
         for info in socket.getaddrinfo(parsed.hostname, None):
-            if ipaddress.ip_address(info[4][0]).is_private or ipaddress.ip_address(info[4][0]).is_loopback:
+            if not ipaddress.ip_address(info[4][0]).is_global:
                 return False
     except (OSError, ValueError):
         return False
@@ -315,10 +410,15 @@ def rank_candidates(candidates, question, requirements=None, subquestions=None):
                              host.endswith(".ac.uk")) else 0.0
         path = urlparse(candidate.get("url", "")).path.lower()
         primary_hint = 0.6 if any(token in path for token in ("/docs", "/documentation", "/research", "/report", "/news")) else 0.0
+        freshness = freshness_score(candidate.get("published_at", "")) if freshness_sensitive(question) else 0.0
         candidate = dict(candidate)
-        candidate["score"] = round(overlap / denominator + authority + primary_hint, 3)
+        candidate["score"] = round(overlap / denominator + authority + primary_hint + freshness, 3)
         scored.append(candidate)
     scored.sort(key=lambda item: (-item["score"], item.get("title", "").lower()))
+    return diversify(scored)
+
+
+def diversify(scored):
     # Interleave domains so one publisher cannot consume the reading budget.
     ranked, pending, domain_counts = [], scored[:], {}
     while pending:
@@ -329,6 +429,76 @@ def rank_candidates(candidates, question, requirements=None, subquestions=None):
         item["rank"] = len(ranked) + 1
         ranked.append(item)
     return ranked
+
+
+def freshness_sensitive(query):
+    query_terms = terms(query)
+    current_year = str(date.today().year)
+    return bool(query_terms & {"current", "currently", "latest", "recent", "today", "news", "price", "prices",
+                               "law", "laws", "regulation", "regulations", "schedule", current_year})
+
+
+def freshness_score(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        published = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        age_days = max(0, (datetime.now(timezone.utc) - published).days)
+    except ValueError:
+        match = re.search(r"\b(20\d{2})\b", raw)
+        if not match:
+            return 0.0
+        age_days = max(0, (date.today().year - int(match.group(1))) * 365)
+    if age_days <= 30:
+        return 1.0
+    if age_days <= 180:
+        return 0.7
+    if age_days <= 365:
+        return 0.4
+    if age_days <= 730:
+        return 0.1
+    return -0.25
+
+
+def embedding_rerank(job_id, settings, candidates, query):
+    model = str(settings.get("embedding_model") or "").strip()
+    if not model or len(candidates) < 2:
+        return candidates
+    inputs = [query] + [f"{item.get('title', '')}\n{item.get('snippet', '')}" for item in candidates]
+    try:
+        response = requests.post(settings["ollama_url"].rstrip("/") + "/api/embed",
+                                 json={"model": model, "input": inputs}, timeout=90)
+        response.raise_for_status()
+        vectors = response.json().get("embeddings") or []
+        if len(vectors) != len(inputs):
+            raise ValueError("embedding response did not contain every requested vector")
+        query_vector = vectors[0]
+        reranked = []
+        for candidate, vector in zip(candidates, vectors[1:]):
+            candidate = dict(candidate)
+            candidate["semantic_similarity"] = round(cosine_similarity(query_vector, vector), 4)
+            candidate["score"] = round(candidate["score"] + candidate["semantic_similarity"] * 2, 3)
+            reranked.append(candidate)
+        reranked.sort(key=lambda item: (-item["score"], item.get("title", "").lower()))
+        event(job_id, "reasoning", "returned", f"Semantically reranked {len(reranked)} results",
+              f"Embedding model: {model}")
+        return diversify(reranked)
+    except Exception as exc:
+        event(job_id, "reasoning", "failed", "Embedding reranking unavailable",
+              f"Using lexical ranking: {request_error(exc)}")
+        return candidates
+
+
+def cosine_similarity(left, right):
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = sum(float(a) * float(b) for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(float(value) ** 2 for value in left))
+    right_norm = math.sqrt(sum(float(value) ** 2 for value in right))
+    return dot / (left_norm * right_norm) if left_norm and right_norm else 0.0
 
 
 def best_passages(content, query, limit=5, max_chars=9_000):
@@ -365,7 +535,8 @@ def evidence_ledger(evidence):
     for item in evidence:
         claims = "\n".join(f"- {claim}" for claim in item.get("claims", [])) or "- No claims pre-extracted"
         passages = "\n\n".join(f"Passage {index}: {passage}" for index, passage in enumerate(item.get("passages", []), 1))
-        rows.append(f"[{item['source_id']}] {item['title']}\nURL: {item['url']}\nFound via: {item['query']}\n"
+        published = f"\nPublished: {item['published_at']}" if item.get("published_at") else ""
+        rows.append(f"[{item['source_id']}] {item['title']}\nURL: {item['url']}\nFound via: {item['query']}{published}\n"
                     f"Extracted claims:\n{claims}\nRelevant passages:\n{passages or item.get('text', '')}")
     return "\n\n---\n\n".join(rows)
 

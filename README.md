@@ -22,7 +22,9 @@ Open [http://127.0.0.1:5053](http://127.0.0.1:5053). Set your Ollama URL and mod
 - Chat uploads support PDF, DOCX, XLSX, CSV, TXT, Markdown, EML, and MSG. Extracted text is bounded and retained in browser-local conversation context for follow-up questions.
 - Runtime settings are written to the ignored `settings.json` file.
 - Search results are relevance-ranked and diversified before pages are opened. Pages are split into passages, and only the passages most relevant to the clarified request are retained.
+- Page downloads run concurrently within a configurable worker limit. Redirect destinations are revalidated, response sizes are bounded, and public web PDFs can be read directly.
+- Freshness-sensitive questions boost recent dated results. An optional Ollama embedding model can add semantic reranking while retaining a lexical fallback.
 - Research rounds assess evidence coverage and generate targeted follow-up searches for material gaps instead of stopping after the first usable page.
 - Each retained source contributes a small evidence ledger of claims and supporting passages. A separate final pass checks inline citations against that ledger.
 - Each fetched page is checked for query-specific usefulness before it is used. Useful domains are learned in the allowed list, but a single failed or irrelevant page no longer excludes an entire domain. Excluded domains remain under explicit user control.
-- The app blocks loopback and private-network page fetching to reduce SSRF risk. Ollama itself may still be configured on a private address.
+- The app blocks credentials in URLs and non-public network destinations, including every redirect hop, to reduce SSRF risk. Ollama itself may still be configured on a private address.

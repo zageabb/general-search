@@ -5,6 +5,8 @@
   "max_search_rounds": 2,
   "results_per_query": 5,
   "max_pages_to_read": 10,
+  "max_fetch_workers": 4,
+  "embedding_model": "",
   "allowed_domains": "",
   "blocked_domains": "reddit.com\nquora.com",
   "market_country": "GB",

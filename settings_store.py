@@ -17,6 +17,8 @@ DEFAULTS = {
     "max_search_rounds": 2,
     "results_per_query": 5,
     "max_pages_to_read": 10,
+    "max_fetch_workers": 4,
+    "embedding_model": "",
     "allowed_domains": "",
     "blocked_domains": "reddit.com\nquora.com",
     "market_country": "GB",
@@ -156,7 +158,7 @@ def save_settings(values):
         if key not in values:
             continue
         value = values[key]
-        if key in {"max_search_rounds", "results_per_query", "max_pages_to_read"}:
+        if key in {"max_search_rounds", "results_per_query", "max_pages_to_read", "max_fetch_workers"}:
             try:
                 value = int(value)
             except (TypeError, ValueError):
@@ -165,6 +167,7 @@ def save_settings(values):
     current["max_search_rounds"] = max(1, min(5, current["max_search_rounds"]))
     current["results_per_query"] = max(2, min(10, current["results_per_query"]))
     current["max_pages_to_read"] = max(1, min(30, current["max_pages_to_read"]))
+    current["max_fetch_workers"] = max(1, min(8, current["max_fetch_workers"]))
     with LOCK:
         SETTINGS_FILE.write_text(json.dumps(current, indent=2) + "\n")
     return current
