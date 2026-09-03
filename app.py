@@ -19,6 +19,7 @@ install_browser_fallback()
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 30_000_000
+app.config["APP_VERSION"] = "0.1.0"
 
 
 @app.get("/")
