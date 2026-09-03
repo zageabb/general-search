@@ -7,10 +7,15 @@ from io import BytesIO
 
 from flask import Flask, jsonify, render_template, request, send_file
 
+from browser_fetch import install_browser_fallback
 from document_extraction import clean_documents, document_context, extract_upload
+from research_enhancements import install_research_enhancements
 from search import JOBS, list_models, start_job
 from settings_store import PROMPTS, get_settings, save_prompts, save_settings
 
+
+install_research_enhancements()
+install_browser_fallback()
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 30_000_000
