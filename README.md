@@ -1,5 +1,31 @@
 # General Search
 
+## Ubuntu server deployment
+
+Verified on **14 September 2026** against the listeners, user systemd services,
+Docker port mappings and deployment registry on `192.168.1.249`.
+
+| Endpoint | Host TCP port | LAN URL |
+|---|---:|---|
+| Application | 5053 | http://192.168.1.249:5053/ |
+
+Checkout: `/home/zageabb/ollama-chat/general-search`.
+
+These are **user** systemd units. Inspect them with:
+
+```bash
+systemctl --user status ollama-chat-general-search.service
+systemctl --user cat ollama-chat-general-search.service
+```
+
+Local verification URL: `http://127.0.0.1:5053/`. HTTP 200 was observed during this audit.
+
+Development defaults and container-internal ports elsewhere in this repository
+may differ from this host deployment. Use the live ports above when accessing
+this Ubuntu server; do not start a second copy on a port already occupied.
+
+[Complete Ubuntu port inventory](https://github.com/zageabb/universal-deployment-agent/blob/main/UBUNTU_PORTS.md).
+
 A general-purpose assistant extracted from Tender Designer. It can answer from local Ollama knowledge, plan targeted web research, read public pages, analyse uploaded documents, synthesise cited Markdown answers, keep conversations in browser storage, and export results as Markdown.
 
 General Search is the generic upstream research engine. Specialist applications should add their own domain strategy on top of it rather than embedding domain-specific behaviour into the core. For example, Internet Pricing can add pricing/procurement logic while Tender Designer can add specification and compliance logic, with both benefiting from the same retrieval, extraction, ranking and citation improvements.
