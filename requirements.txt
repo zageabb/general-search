@@ -1,6 +1,7 @@
 Flask==3.1.2
 beautifulsoup4==4.13.4
-ddgs==9.5.5
+ddgs==9.16.0
+primp==2.0.1
 requests==2.32.5
 playwright>=1.50,<2
 pypdf>=4.0
