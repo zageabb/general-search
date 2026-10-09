@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 
 from flask import Flask, jsonify, render_template, request, send_file
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from browser_fetch import install_browser_fallback
 from document_extraction import clean_documents, document_context, extract_upload
@@ -18,6 +19,9 @@ install_research_enhancements()
 install_browser_fallback()
 
 app = Flask(__name__)
+# Trust the single locally controlled UDA/Caddy ingress hop only.
+# Do not expose the backend directly to untrusted networks.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_prefix=1)
 app.config["MAX_CONTENT_LENGTH"] = 30_000_000
 app.config["APP_VERSION"] = "0.1.0"
 
