@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head>
+<head><base href="{{ url_for('index') }}">
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>General Search</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,8 +22,8 @@
 <body>
 <div class="site-shell">
   <nav class="app-nav">
-    <a class="brand-lockup" href="/"><span class="brand-mark">GS</span><span>General Search</span><span class="brand-version">v{{ config.APP_VERSION }}</span></a>
-    <div class="nav-links"><a class="active" href="/">Search</a><a href="/settings">Settings</a></div>
+    <a class="brand-lockup" href="{{ url_for('index') }}"><span class="brand-mark">GS</span><span>General Search</span><span class="brand-version">v{{ config.APP_VERSION }}</span></a>
+    <div class="nav-links"><a class="active" href="{{ url_for('index') }}">Search</a><a href="{{ url_for('settings_page') }}">Settings</a></div>
   </nav>
   <main>
     <section class="research-shell" id="workspace" data-default-model="{{ settings.model }}">
