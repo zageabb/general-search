@@ -1,0 +1,35 @@
+schema_version: 1
+application:
+  name: general-search
+  display_name: General Search
+  group: TAIJU
+source:
+  branch: main
+runtime:
+  type: python
+  version: "3.10.12"
+  working_dir: .
+build:
+  working_dir: .
+  commands:
+    - ["python", "-m", "pip", "install", "-r", "requirements.txt"]
+service:
+  type: systemd
+  entrypoint: ["python", "app.py"]
+  port: 5053
+  health_path: /
+proxy:
+  enabled: true
+  path: /apps/general-search/
+  authentication: uda
+environment:
+  required:
+    - ADMIN_PASSWORD
+    - ADMIN_USERNAME
+    - MAIL_APP_PASSWORD
+    - SECRET_KEY
+deployment:
+  auto_update: true
+  rollback: true
+  github_reporting: false
+
